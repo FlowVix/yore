@@ -6,15 +6,18 @@ mod path;
 mod seer;
 mod yorer;
 
+use std::marker::PhantomData;
+
 pub use next::Yorenext;
-pub use path::{DynStoredPath, SeerPath, StoredPath, StoredPathEnd, StoredPathNext};
+pub use path::{
+    DynStoredPath, SeerPath, SeerPathEnd, SeerPathNext, StoredPath, StoredPathEnd, StoredPathNext,
+};
 pub use seer::{
     Seer, Seerious, SeeriousMutation,
     scalar::{Scalar, ScalarSeer},
+    vec::{VecMutation, VecMutationUndo, VecSeer},
 };
 pub use yorer::{SavedStack, YoreStacks, Yorer};
-
-pub enum Never {}
 
 mod seal {
     #[allow(unnameable_types)]

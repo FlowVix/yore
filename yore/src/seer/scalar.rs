@@ -1,7 +1,7 @@
-use std::{marker::PhantomData, ops::Deref};
+use std::{convert::Infallible, marker::PhantomData, ops::Deref};
 
 use crate::{
-    Never, SavedStack, SeeriousMutation,
+    SavedStack, SeeriousMutation,
     path::{SeerPath, StoredPathEnd},
     seer::{Seer, Seerious},
     yorer::YoreStacks,
@@ -9,37 +9,34 @@ use crate::{
 
 pub trait Scalar: Clone + 'static {}
 impl<S: Scalar> Seerious for S {
-    type Seer<'a, P: SeerPath<Target = Self>>
-        = ScalarSeer<'a, S, P>
-    where
-        Self: 'a,
-        P: 'a;
+    type Seer<'a, P: SeerPath<Target = Self>> = ScalarSeer<'a, S, P>;
 
-    fn make_seer<'a>(
+    fn make_seer<'a, P: SeerPath<Target = Self> + 'a>(
         &'a mut self,
         stacks: &'a mut YoreStacks,
-    ) -> Self::Seer<'a, PhantomData<Self>> {
+        path: P,
+    ) -> Self::Seer<'a, P> {
         ScalarSeer {
             stacks,
             value: self,
-            path: PhantomData,
+            path,
         }
     }
 
-    type CustomMutation = Never;
-    type CustomMutationSaved = Never;
+    type CustomMutation = Infallible;
+    type CustomMutationUndo = Infallible;
 
     fn apply_cmutation(
         &mut self,
         _m: Self::CustomMutation,
         _yore: &mut SavedStack,
-    ) -> Self::CustomMutationSaved {
+    ) -> Self::CustomMutationUndo {
         unreachable!()
     }
 
     fn unapply_cmutation(
         &mut self,
-        _saved: Self::CustomMutationSaved,
+        _m: Self::CustomMutationUndo,
         _yore: &mut SavedStack,
     ) -> Self::CustomMutation {
         unreachable!()
@@ -53,7 +50,7 @@ pub struct ScalarSeer<'a, T, P> {
 impl<'a, T: Scalar, P: SeerPath<Target = T>> Seer<T> for ScalarSeer<'a, T, P> {
     fn set(&mut self, to: T) {
         self.stacks
-            .apply_mutation(self.value, SeeriousMutation::Replace(to), self.path.clone());
+            .apply_mutation(self.value, SeeriousMutation::Replace(to), &self.path);
     }
 }
 impl<'a, T: Scalar, P: SeerPath<Target = T>> ScalarSeer<'a, T, P> {

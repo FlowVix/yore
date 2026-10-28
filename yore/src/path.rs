@@ -6,9 +6,9 @@ use crate::{
     yorer::{SavedStack, YoreStacks},
 };
 
-enum SavedMutation<T: Seerious> {
+enum MutationUndo<T: Seerious> {
     Replace(T),
-    Custom(T::CustomMutationSaved),
+    Custom(T::CustomMutationUndo),
 }
 
 pub struct StoredPathEnd<T: Seerious>(Option<SeeriousMutation<T>>);
@@ -17,19 +17,19 @@ pub struct StoredPathNext<T, Next, P> {
     then: P,
     _p: PhantomData<fn(T) -> T>,
 }
-impl<T: Seerious + 'static> StoredPathEnd<T> {
+impl<T: Seerious> StoredPathEnd<T> {
     fn apply_direct(&mut self, to: &mut T, yore: &mut SavedStack) {
-        let saved = match self.0.take().unwrap() {
+        let undo = match self.0.take().unwrap() {
             SeeriousMutation::Replace(with) => {
                 let prev = mem::replace(to, with);
-                SavedMutation::Replace(prev)
+                MutationUndo::Replace(prev)
             }
             SeeriousMutation::Custom(m) => {
-                let saved = to.apply_cmutation(m, yore);
-                SavedMutation::Custom(saved)
+                let undo = to.apply_cmutation(m, yore);
+                MutationUndo::Custom(undo)
             }
         };
-        yore.push_saved(saved);
+        yore.push(undo);
     }
 }
 
@@ -41,12 +41,12 @@ pub trait StoredPath: 'static {
     fn unapply(&mut self, to: &mut Self::From, yore: &mut SavedStack);
     fn into_dyn(self) -> Box<dyn DynStoredPath>
     where
-        Self: Sized + 'static,
+        Self: Sized,
     {
         Box::new((self, PhantomData))
     }
 }
-impl<T: Seerious + 'static> StoredPath for StoredPathEnd<T> {
+impl<T: Seerious> StoredPath for StoredPathEnd<T> {
     type From = T;
     type Target = T;
 
@@ -54,22 +54,22 @@ impl<T: Seerious + 'static> StoredPath for StoredPathEnd<T> {
         self.apply_direct(to, yore);
     }
     fn unapply(&mut self, to: &mut T, yore: &mut SavedStack) {
-        let saved: SavedMutation<T> = yore.pop_saved();
-        let m = match saved {
-            SavedMutation::Replace(saved) => {
-                let saved = mem::replace(to, saved);
+        let undo: MutationUndo<T> = yore.pop();
+        let m = match undo {
+            MutationUndo::Replace(undo) => {
+                let saved = mem::replace(to, undo);
                 SeeriousMutation::Replace(saved)
             }
-            SavedMutation::Custom(saved) => {
-                let m = to.unapply_cmutation(saved, yore);
+            MutationUndo::Custom(undo) => {
+                let m = to.unapply_cmutation(undo, yore);
                 SeeriousMutation::Custom(m)
             }
         };
         self.0 = Some(m);
     }
 }
-impl<T: Seerious + 'static, Next: Yorenext<T> + 'static, P: StoredPath<From = Next::TargetType>>
-    StoredPath for StoredPathNext<T, Next, P>
+impl<T: Seerious, Next: Yorenext<T>, P: StoredPath<From = Next::TargetType>> StoredPath
+    for StoredPathNext<T, Next, P>
 {
     type From = T;
     type Target = P::Target;
@@ -99,25 +99,49 @@ impl<T: Seerious + 'static, P: StoredPath<From = T>> DynStoredPath for (P, Phant
     }
 }
 
-pub trait SeerPath: Clone {
+pub struct SeerPathEnd<T: Seerious>(pub(crate) PhantomData<T>);
+
+pub struct SeerPathNext<T, Next, P> {
+    next: Next,
+    then: P,
+    _p: PhantomData<fn(T) -> T>,
+}
+impl<T: Seerious> Clone for SeerPathEnd<T> {
+    fn clone(&self) -> Self {
+        Self(PhantomData)
+    }
+}
+impl<T, Next: Clone, P: Clone> Clone for SeerPathNext<T, Next, P> {
+    fn clone(&self) -> Self {
+        Self {
+            next: self.next.clone(),
+            then: self.then.clone(),
+            _p: PhantomData,
+        }
+    }
+}
+
+pub trait SeerPath: Clone + 'static {
     type From: Seerious;
     type Target: Seerious;
     type Completed: StoredPath<From = Self::From, Target = Self::Target>;
     fn complete_and_apply_direct(
-        self,
+        &self,
         target: &mut Self::Target,
         m: SeeriousMutation<Self::Target>,
         yore: &mut SavedStack,
     ) -> Self::Completed;
+    type Push<Next: Yorenext<Self::Target>>: SeerPath<From = Self::From, Target = Next::TargetType>;
+    fn push<Next: Yorenext<Self::Target>>(&self, next: Next) -> Self::Push<Next>;
 }
 
-impl<T: Seerious + 'static> SeerPath for PhantomData<T> {
+impl<T: Seerious> SeerPath for SeerPathEnd<T> {
     type From = T;
     type Target = T;
     type Completed = StoredPathEnd<T>;
 
     fn complete_and_apply_direct(
-        self,
+        &self,
         target: &mut Self::Target,
         m: SeeriousMutation<Self::Target>,
         yore: &mut SavedStack,
@@ -126,26 +150,41 @@ impl<T: Seerious + 'static> SeerPath for PhantomData<T> {
         out.apply_direct(target, yore);
         out
     }
+
+    type Push<Next: Yorenext<T>> = SeerPathNext<T, Next, SeerPathEnd<Next::TargetType>>;
+    fn push<Next: Yorenext<Self::Target>>(&self, next: Next) -> Self::Push<Next> {
+        SeerPathNext {
+            next,
+            then: SeerPathEnd(PhantomData),
+            _p: PhantomData,
+        }
+    }
 }
-impl<
-    T: Seerious + 'static,
-    Next: Yorenext<T> + Clone + 'static,
-    P: SeerPath<From = Next::TargetType>,
-> SeerPath for (PhantomData<T>, Next, P)
+impl<T: Seerious, Next: Yorenext<T>, P: SeerPath<From = Next::TargetType>> SeerPath
+    for SeerPathNext<T, Next, P>
 {
     type From = T;
     type Target = P::Target;
     type Completed = StoredPathNext<T, Next, P::Completed>;
 
     fn complete_and_apply_direct(
-        self,
+        &self,
         target: &mut Self::Target,
         m: SeeriousMutation<Self::Target>,
         yore: &mut SavedStack,
     ) -> Self::Completed {
         StoredPathNext {
-            next: self.1,
-            then: self.2.complete_and_apply_direct(target, m, yore),
+            next: self.next.clone(),
+            then: self.then.complete_and_apply_direct(target, m, yore),
+            _p: PhantomData,
+        }
+    }
+
+    type Push<Next2: Yorenext<Self::Target>> = SeerPathNext<T, Next, P::Push<Next2>>;
+    fn push<Next2: Yorenext<Self::Target>>(&self, next: Next2) -> Self::Push<Next2> {
+        SeerPathNext {
+            next: self.next.clone(),
+            then: self.then.push(next),
             _p: PhantomData,
         }
     }
