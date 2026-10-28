@@ -1,0 +1,10 @@
+[package]
+name = "yore"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ahash = { workspace = true }
+nohash-hasher = { workspace = true }
+smallvec = { workspace = true }
+yore_macro = { path = "../yore_macro" }

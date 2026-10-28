@@ -1,0 +1,14 @@
+[package]
+name = "yore_macro"
+version = "0.1.0"
+edition = "2024"
+
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { workspace = true, features = ["full", "visit-mut"] }
+quote = { workspace = true }
+proc-macro2 = { workspace = true }
+either = { workspace = true }
